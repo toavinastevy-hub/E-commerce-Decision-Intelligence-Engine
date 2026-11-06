@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ResponsiveContainer,
   BarChart,
@@ -13,8 +13,8 @@ import { Hero } from '../components/Hero';
 import { MetricCard } from '../components/MetricCard';
 import { SalesRow } from '../types';
 import { baselineByProduct, simulate, impliedVolumeChange } from '../engine/simulator';
-import { money, pct, pctSign, HELP_TEXTS } from '../engine/helpers';
-import { Info, AlertCircle, CheckCircle, Sliders } from 'lucide-react';
+import { money, pct, pctSign } from '../engine/helpers';
+import { Sliders, DollarSign, TrendingUp, ShoppingBag, PieChart, CheckCircle2, AlertTriangle, Search, CheckSquare, Square } from 'lucide-react';
 
 interface SimulatorPageProps {
   salesData: SalesRow[];
@@ -23,25 +23,35 @@ interface SimulatorPageProps {
 export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
   if (salesData.length === 0) {
     return (
-      <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center">
-        <p className="text-slate-600">No data confirmed yet. Go to the Data page to start.</p>
+      <div className="bg-white dark:bg-[#111827] p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center shadow-xs">
+        <p className="text-slate-500 dark:text-slate-400">No sales data loaded yet. Import an Excel or CSV file to run simulations.</p>
       </div>
     );
   }
 
-  const baselineProducts = useMemo(() => baselineByProduct(salesData), [salesData]);
+  // Ensure only products physically inside the uploaded dataset/excel are displayed
+  const baselineProducts = useMemo(() => {
+    const list = baselineByProduct(salesData);
+    return list.filter(p => p.product_id && p.product_name && p.product_name.trim() !== '');
+  }, [salesData]);
+
   const allProductIds = useMemo(() => baselineProducts.map(p => p.product_id), [baselineProducts]);
 
-  // Settings
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>(allProductIds);
-  const [priceChg, setPriceChg] = useState(0); // -30 to 30 %
-  const [costChg, setCostChg] = useState(0); // -30 to 30 %
+  const [productSearch, setProductSearch] = useState('');
+  const [priceChg, setPriceChg] = useState(0);
+  const [costChg, setCostChg] = useState(0);
   const [setDiscActive, setSetDiscActive] = useState(false);
-  const [newDisc, setNewDisc] = useState(10); // 0 to 80 %
+  const [newDisc, setNewDisc] = useState(10);
 
   const [mode, setMode] = useState<'manual' | 'elasticity'>('manual');
-  const [manualVolChg, setManualVolChg] = useState(0); // -60 to 200 %
-  const [elasticity, setElasticity] = useState(-1.5); // -4.0 to 0.0
+  const [manualVolChg, setManualVolChg] = useState(0);
+  const [elasticity, setElasticity] = useState(-1.5);
+
+  // Sync selectedProductIds whenever salesData changes (e.g. user uploads a new Excel/CSV file)
+  useEffect(() => {
+    setSelectedProductIds(allProductIds);
+  }, [allProductIds]);
 
   const toggleProduct = (pid: string) => {
     if (selectedProductIds.includes(pid)) {
@@ -54,14 +64,24 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
   };
 
   const selectAllProducts = () => setSelectedProductIds(allProductIds);
+  const deselectAllProducts = () => {
+    if (allProductIds.length > 0) {
+      // Keep at least 1 selected so simulation has data
+      setSelectedProductIds([allProductIds[0]]);
+    }
+  };
 
-  // Compute effective volume change
+  // Filter products by search query
+  const filteredCatalog = useMemo(() => {
+    if (!productSearch.trim()) return baselineProducts;
+    const q = productSearch.toLowerCase();
+    return baselineProducts.filter(p => p.product_name.toLowerCase().includes(q) || p.product_id.toLowerCase().includes(q));
+  }, [baselineProducts, productSearch]);
+
   const computedVolChg = useMemo(() => {
     if (mode === 'manual') {
       return manualVolChg / 100;
     }
-    // Compute implied volume change from price change & discount change
-    // Using baseline for selected products
     const pChange = priceChg / 100;
     const cChange = costChg / 100;
     const dRate = setDiscActive ? newDisc / 100 : null;
@@ -77,7 +97,6 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
     }
   }, [mode, manualVolChg, priceChg, costChg, setDiscActive, newDisc, salesData, selectedProductIds, elasticity]);
 
-  // Run simulation
   const simResult = useMemo(() => {
     try {
       const pChange = priceChg / 100;
@@ -90,69 +109,88 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
   }, [salesData, priceChg, costChg, setDiscActive, newDisc, computedVolChg, selectedProductIds]);
 
   if (!simResult) {
-    return <div className="p-4 text-rose-600">Error computing simulation.</div>;
+    return <div className="p-4 text-rose-500">Error computing scenario simulation.</div>;
   }
 
-  const { baseline: b, scenario: s, change: ch, breakeven_units: be, by_product: bp } = simResult;
+  const { baseline: b, scenario: s, change: ch, breakeven_units: be } = simResult;
 
   const comparisonChartData = [
     {
-      Measure: 'Sales after discounts',
-      'Now (from data)': Math.round(b.net_revenue),
-      'After change (assumption)': Math.round(s.net_revenue)
+      Measure: 'Net Revenue',
+      'Current Baseline': Math.round(b.net_revenue),
+      'Simulated Scenario': Math.round(s.net_revenue)
     },
     {
-      Measure: 'Product cost',
-      'Now (from data)': Math.round(b.cogs),
-      'After change (assumption)': Math.round(s.cogs)
+      Measure: 'Product Cost (COGS)',
+      'Current Baseline': Math.round(b.cogs),
+      'Simulated Scenario': Math.round(s.cogs)
     },
     {
-      Measure: 'Profit before overheads',
-      'Now (from data)': Math.round(b.gross_profit),
-      'After change (assumption)': Math.round(s.gross_profit)
+      Measure: 'Gross Profit',
+      'Current Baseline': Math.round(b.gross_profit),
+      'Simulated Scenario': Math.round(s.gross_profit)
     }
   ];
 
   return (
     <div className="space-y-6">
       <Hero
-        icon="🧪"
-        title="Try a price change"
-        subtitle="Ask &quot;what if?&quot; Change the price, discount or cost and see the effect on sales and profit. Your real data is never changed."
+        icon={<Sliders className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />}
+        title="Price &amp; Volume Scenario Simulator"
+        subtitle="Simulate what-if adjustments to pricing, supplier unit costs, and promotional discounts to evaluate projected commercial impact."
       />
 
-      <div className="p-4 bg-indigo-50/70 border border-indigo-100 rounded-xl text-xs text-indigo-900 leading-relaxed flex items-start gap-2.5">
-        <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-        <div>
-          <b>Observed</b> = from your data (today&apos;s numbers). <b>Assumed</b> = the settings you choose below. The data cannot tell us how customers will react to a new price, so sales volume is always YOUR assumption. Results are scenarios, not forecasts.
+      {/* Target Catalog Selection - Strictly constrained to products in the uploaded file */}
+      <div className="exec-card p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+          <div className="flex items-center gap-2">
+            <span>Target Catalog Selection:</span>
+            <span className="font-mono text-[11px] text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800">
+              {selectedProductIds.length} of {allProductIds.length} items from dataset
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={productSearch}
+                onChange={e => setProductSearch(e.target.value)}
+                placeholder="Search products..."
+                className="pl-8 pr-3 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-800 dark:text-slate-200 focus:outline-hidden focus:border-indigo-500 w-44"
+              />
+            </div>
+            <button
+              onClick={selectAllProducts}
+              className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 text-xs cursor-pointer flex items-center gap-1 font-medium"
+            >
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>Select All</span>
+            </button>
+            <button
+              onClick={deselectAllProducts}
+              className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-xs cursor-pointer flex items-center gap-1 font-medium"
+            >
+              <Square className="w-3.5 h-3.5" />
+              <span>Reset</span>
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* Product selector chips */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <label className="text-xs font-bold text-slate-800">
-            Products to include ({selectedProductIds.length} of {allProductIds.length})
-          </label>
-          <button
-            onClick={selectAllProducts}
-            className="text-xs text-indigo-600 hover:underline font-semibold cursor-pointer"
-          >
-            Select All
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
-          {baselineProducts.map(p => {
+        {/* Product Pills - Only products inside the active uploaded file */}
+        <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pt-1">
+          {filteredCatalog.map(p => {
             const isSel = selectedProductIds.includes(p.product_id);
             return (
               <button
                 key={p.product_id}
                 onClick={() => toggleProduct(p.product_id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer truncate max-w-xs ${
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer truncate max-w-xs micro-interactive ${
                   isSel
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-indigo-50 dark:bg-slate-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-500/30 font-semibold shadow-2xs'
+                    : 'bg-slate-100 dark:bg-slate-900/50 text-slate-500 dark:text-slate-400 border border-transparent hover:text-slate-800 dark:hover:text-slate-200'
                 }`}
+                title={p.product_name}
               >
                 {p.product_name}
               </button>
@@ -161,21 +199,17 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
         </div>
       </div>
 
-      {/* Simulator Controls */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-xs space-y-6">
-        <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-          <Sliders className="w-4 h-4 text-indigo-600" />
-          <h3 className="text-base font-bold text-slate-900">
-            Your &quot;what if&quot; settings
-          </h3>
-        </div>
+      {/* Simulator Inputs Grid */}
+      <div className="exec-card p-6 space-y-6">
+        <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide border-b border-slate-200 dark:border-slate-800 pb-3">
+          Simulation Parameters
+        </h3>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Price Change */}
-          <div>
-            <div className="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1.5">
-              <span>Change selling price by (%)</span>
-              <span className={`font-mono font-bold ${priceChg > 0 ? 'text-emerald-600' : priceChg < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+          <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2 micro-interactive">
+            <div className="flex justify-between items-center text-xs font-semibold text-slate-700 dark:text-slate-300">
+              <span>Price Adjustment:</span>
+              <span className={`font-mono font-bold ${priceChg > 0 ? 'text-emerald-600 dark:text-emerald-400' : priceChg < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
                 {priceChg > 0 ? `+${priceChg}%` : `${priceChg}%`}
               </span>
             </div>
@@ -187,14 +221,12 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
               onChange={e => setPriceChg(Number(e.target.value))}
               className="w-full accent-indigo-600 cursor-pointer"
             />
-            <p className="text-[11px] text-slate-400 mt-1">+10 means every price goes up by 10%.</p>
           </div>
 
-          {/* Cost Change */}
-          <div>
-            <div className="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1.5">
-              <span>Change supplier cost by (%)</span>
-              <span className={`font-mono font-bold ${costChg > 0 ? 'text-rose-600' : costChg < 0 ? 'text-emerald-600' : 'text-slate-900'}`}>
+          <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2 micro-interactive">
+            <div className="flex justify-between items-center text-xs font-semibold text-slate-700 dark:text-slate-300">
+              <span>Supplier Cost Shift:</span>
+              <span className={`font-mono font-bold ${costChg > 0 ? 'text-rose-600 dark:text-rose-400' : costChg < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}`}>
                 {costChg > 0 ? `+${costChg}%` : `${costChg}%`}
               </span>
             </div>
@@ -206,24 +238,20 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
               onChange={e => setCostChg(Number(e.target.value))}
               className="w-full accent-indigo-600 cursor-pointer"
             />
-            <p className="text-[11px] text-slate-400 mt-1">+10 means suppliers charge 10% more.</p>
           </div>
 
-          {/* New Discount */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+          <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2 micro-interactive">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={setDiscActive}
                   onChange={e => setSetDiscActive(e.target.checked)}
-                  className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                  className="rounded bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
                 />
-                <span>Set fixed discount (%)</span>
+                <span>Override Discount</span>
               </label>
-              {setDiscActive && (
-                <span className="font-mono font-bold text-indigo-600 text-xs">{newDisc}%</span>
-              )}
+              {setDiscActive && <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 text-xs">{newDisc}%</span>}
             </div>
             <input
               type="range"
@@ -232,265 +260,182 @@ export const SimulatorPage: React.FC<SimulatorPageProps> = ({ salesData }) => {
               value={newDisc}
               disabled={!setDiscActive}
               onChange={e => setNewDisc(Number(e.target.value))}
-              className={`w-full accent-indigo-600 ${!setDiscActive ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+              className={`w-full accent-indigo-600 ${!setDiscActive ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
             />
-            <p className="text-[11px] text-slate-400 mt-1">
-              {setDiscActive ? 'New discount applied to all selected' : 'Otherwise keeps each product&apos;s observed discount'}
-            </p>
           </div>
         </div>
 
-        {/* Sales Volume Mode */}
-        <div className="border-t border-slate-100 pt-5">
-          <label className="block text-xs font-bold text-slate-800 mb-3">
-            How many items will you sell after the change?
-          </label>
-          <div className="flex flex-wrap gap-4 mb-4">
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+        {/* Volume Assumption Mode */}
+        <div className="pt-2 border-t border-slate-200 dark:border-slate-800/80 space-y-3">
+          <div className="flex flex-wrap items-center gap-6">
+            <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Demand Response Mode:</span>
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
               <input
                 type="radio"
                 name="simMode"
                 checked={mode === 'manual'}
                 onChange={() => setMode('manual')}
-                className="text-indigo-600 focus:ring-indigo-500"
+                className="text-indigo-600 focus:ring-indigo-500 cursor-pointer"
               />
-              <span>I choose how many more or fewer items sell</span>
+              <span>Direct Volume Guess (%)</span>
             </label>
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300 cursor-pointer">
               <input
                 type="radio"
                 name="simMode"
                 checked={mode === 'elasticity'}
                 onChange={() => setMode('elasticity')}
-                className="text-indigo-600 focus:ring-indigo-500"
+                className="text-indigo-600 focus:ring-indigo-500 cursor-pointer"
               />
-              <span>Estimate it from how strongly customers react to price (elasticity)</span>
+              <span>Price Elasticity Model</span>
             </label>
           </div>
 
-          {mode === 'manual' ? (
-            <div className="max-w-md">
-              <div className="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1.5">
-                <span>Change in items sold (%)</span>
-                <span className="font-mono font-bold text-indigo-600">
-                  {manualVolChg > 0 ? `+${manualVolChg}%` : `${manualVolChg}%`}
+          <div className="max-w-md bg-slate-50 dark:bg-slate-900/60 p-4 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2">
+            {mode === 'manual' ? (
+              <>
+                <div className="flex justify-between items-center text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <span>Assumed Sales Volume Change:</span>
+                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                    {manualVolChg > 0 ? `+${manualVolChg}%` : `${manualVolChg}%`}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={-60}
+                  max={200}
+                  value={manualVolChg}
+                  onChange={e => setManualVolChg(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </>
+            ) : (
+              <>
+                <div className="flex justify-between items-center text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  <span>Price Elasticity Coefficient:</span>
+                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{elasticity.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min={-4.0}
+                  max={0.0}
+                  step={0.1}
+                  value={elasticity}
+                  onChange={e => setElasticity(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+                <span className="text-[11px] text-slate-500 dark:text-slate-400 block">
+                  Implied volume change: <b className="text-slate-900 dark:text-white">{pctSign(computedVolChg)}</b>
                 </span>
-              </div>
-              <input
-                type="range"
-                min={-60}
-                max={200}
-                value={manualVolChg}
-                onChange={e => setManualVolChg(Number(e.target.value))}
-                className="w-full accent-indigo-600 cursor-pointer"
-              />
-              <p className="text-[11px] text-slate-400 mt-1">
-                This is YOUR guess. Your data cannot tell how customers will react.
-              </p>
-            </div>
-          ) : (
-            <div className="max-w-md space-y-2">
-              <div className="flex justify-between items-center text-xs font-semibold text-slate-700 mb-1.5">
-                <span>Price elasticity (reaction)</span>
-                <span className="font-mono font-bold text-indigo-600">{elasticity.toFixed(1)}</span>
-              </div>
-              <input
-                type="range"
-                min={-4.0}
-                max={0.0}
-                step={0.1}
-                value={elasticity}
-                onChange={e => setElasticity(Number(e.target.value))}
-                className="w-full accent-indigo-600 cursor-pointer"
-              />
-              <p className="text-[11px] text-slate-500">
-                -1.5 means: a 10% lower price brings about 15% more sales. Implied volume change is <b>{pctSign(computedVolChg)}</b>.
-              </p>
-            </div>
-          )}
+              </>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Results Header and Metrics */}
-      <div className="space-y-4">
-        <h3 className="text-lg font-bold text-slate-900">
-          Results: today versus after your change
-        </h3>
+      {/* Simulated Outcomes - 4 Big Primary Cards */}
+      <div>
+        <div className="flex items-center justify-between mb-3 px-1">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            Projected Commercial Impact
+          </h2>
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard
-            label="Sales after discounts"
+            label="Projected Revenue"
             value={money(s.net_revenue)}
             delta={pctSign(ch.net_revenue)}
             deltaType={ch.net_revenue >= 0 ? 'positive' : 'negative'}
-            help={HELP_TEXTS['Sales after discounts']}
+            subtitle={`Baseline: ${money(b.net_revenue)}`}
+            icon={<DollarSign className="w-5 h-5" />}
+            size="hero"
+            accentColor="indigo"
           />
           <MetricCard
-            label="Profit before overheads"
+            label="Projected Gross Profit"
             value={money(s.gross_profit)}
             delta={pctSign(ch.gross_profit)}
             deltaType={ch.gross_profit >= 0 ? 'positive' : 'negative'}
-            help={HELP_TEXTS['Profit before overheads']}
+            subtitle={`Baseline: ${money(b.gross_profit)}`}
+            icon={<TrendingUp className="w-5 h-5" />}
+            size="hero"
+            accentColor="emerald"
           />
           <MetricCard
-            label="Profit margin"
+            label="Gross Margin Shift"
             value={pct(s.gross_margin_pct)}
             delta={`${ch.gross_margin_pts >= 0 ? '+' : ''}${(ch.gross_margin_pts * 100).toFixed(1)} pts`}
             deltaType={ch.gross_margin_pts >= 0 ? 'positive' : 'negative'}
-            help={HELP_TEXTS['Profit margin']}
+            subtitle={`Baseline: ${pct(b.gross_margin_pct)}`}
+            icon={<PieChart className="w-5 h-5" />}
+            size="hero"
+            accentColor="sky"
           />
           <MetricCard
-            label="Items sold"
+            label="Projected Units Sold"
             value={Math.round(s.units).toLocaleString()}
             delta={pctSign(ch.units)}
             deltaType={ch.units >= 0 ? 'positive' : 'negative'}
-            help={HELP_TEXTS['Items sold']}
+            subtitle={`Baseline: ${Math.round(b.units).toLocaleString()}`}
+            icon={<ShoppingBag className="w-5 h-5" />}
+            size="hero"
+            accentColor="amber"
           />
         </div>
+      </div>
 
-        {/* Break-even point card */}
-        <div className="p-4 rounded-xl border bg-white shadow-xs">
-          {!isFinite(be) ? (
-            <div className="flex items-center gap-2 text-rose-700 text-xs font-semibold">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>
-                Break-even point: none. At the new price, discount and cost, each item earns nothing or loses money, so no number of extra sales can match your current profit before overheads.
-              </span>
-            </div>
-          ) : (
-            <div className="text-xs text-slate-700 leading-relaxed flex items-start gap-2.5">
-              {s.units >= be ? (
-                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              ) : (
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              )}
-              <div>
-                <b>Break-even point: </b>
-                <span>{Math.round(be).toLocaleString()} items must be sold to match your current profit before overheads of {money(b.gross_profit)} (now: {Math.round(b.units).toLocaleString()} items; your change assumes {Math.round(s.units).toLocaleString()}). </span>
-                <span className={s.units >= be ? 'text-emerald-700 font-bold' : 'text-amber-800 font-bold'}>
-                  {s.units >= be ? 'Your assumed volume reaches it.' : 'Your assumed volume does NOT reach it.'}
-                </span>
-              </div>
-            </div>
-          )}
-          <p className="text-[11px] text-slate-400 mt-2">
-            Break-even here means matching your current profit before overheads. The data has no fixed costs, shipping, marketing or tax, so a fixed-cost break-even cannot be calculated.
-          </p>
-        </div>
-
-        {/* Comparison Table and Chart */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-            <h4 className="text-sm font-bold text-slate-900">
-              Scenario comparison
-            </h4>
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <table className="w-full text-xs text-left text-slate-700">
-                <thead className="bg-slate-50 text-slate-900 font-semibold border-b border-slate-200">
-                  <tr>
-                    <th className="p-3">Measure</th>
-                    <th className="p-3 text-right">Now (from data)</th>
-                    <th className="p-3 text-right">After change (assumption)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                  <tr>
-                    <td className="p-3 font-sans font-medium">Items sold</td>
-                    <td className="p-3 text-right">{Math.round(b.units).toLocaleString()}</td>
-                    <td className="p-3 text-right font-bold text-indigo-700">{Math.round(s.units).toLocaleString()}</td>
-                  </tr>
-                  <tr>
-                    <td className="p-3 font-sans font-medium">Sales after discounts</td>
-                    <td className="p-3 text-right">{money(b.net_revenue)}</td>
-                    <td className="p-3 text-right font-bold text-indigo-700">{money(s.net_revenue)}</td>
-                  </tr>
-                  <tr>
-                    <td className="p-3 font-sans font-medium">Product cost</td>
-                    <td className="p-3 text-right">{money(b.cogs)}</td>
-                    <td className="p-3 text-right font-bold text-indigo-700">{money(s.cogs)}</td>
-                  </tr>
-                  <tr>
-                    <td className="p-3 font-sans font-medium">Profit before overheads</td>
-                    <td className="p-3 text-right">{money(b.gross_profit)}</td>
-                    <td className="p-3 text-right font-bold text-indigo-700">{money(s.gross_profit)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+      {/* Break-even Indicator Banner */}
+      <div className="exec-card p-4">
+        {!isFinite(be) ? (
+          <div className="flex items-center gap-2 text-xs text-rose-500 dark:text-rose-400">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>
+              Break-even unreachable: Unit gross profit is zero or negative under these settings.
+            </span>
           </div>
-
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-            <h4 className="text-sm font-bold text-slate-900">
-              Comparison chart ($)
-            </h4>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={comparisonChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="Measure" tick={{ fontSize: 10 }} />
-                  <YAxis
-                    tickFormatter={val => `$${Math.round(val / 1000)}k`}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <Tooltip formatter={(val: any) => [`$${Number(val).toLocaleString()}`, '']} />
-                  <Legend />
-                  <Bar
-                    dataKey="Now (from data)"
-                    fill="#6366f1"
-                    radius={[4, 4, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="After change (assumption)"
-                    fill="#ec4899"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+        ) : (
+          <div className="flex items-center gap-2.5 text-xs text-slate-700 dark:text-slate-300">
+            {s.units >= be ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            )}
+            <span>
+              Break-even requires selling <b>{Math.round(be).toLocaleString()} units</b> to match current baseline gross profit of {money(b.gross_profit)}.{' '}
+              <b className={s.units >= be ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
+                {s.units >= be ? 'Projected volume meets or exceeds break-even.' : 'Projected volume falls below break-even.'}
+              </b>
+            </span>
           </div>
-        </div>
+        )}
+      </div>
 
-        {/* By Product Table */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-          <h4 className="text-sm font-bold text-slate-900">
-            By product
-          </h4>
-          <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[460px]">
-            <table className="w-full text-xs text-left text-slate-700">
-              <thead className="bg-slate-50 text-slate-900 font-semibold border-b border-slate-200 sticky top-0">
-                <tr>
-                  <th className="p-3">Product</th>
-                  <th className="p-3 text-right">Items now</th>
-                  <th className="p-3 text-right">Items after change</th>
-                  <th className="p-3 text-right">Profit now</th>
-                  <th className="p-3 text-right">Profit after change</th>
-                  <th className="p-3 text-right">Items needed to break even</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                {bp.map(p => {
-                  const beTxt = !isFinite(p.breakeven_units) ? '—' : Math.round(p.breakeven_units).toLocaleString();
-                  return (
-                    <tr key={p.product_id} className="hover:bg-slate-50/50">
-                      <td className="p-3 font-sans font-semibold text-slate-900 whitespace-nowrap">
-                        {p.product_name}
-                      </td>
-                      <td className="p-3 text-right">{Math.round(p.baseline_units).toLocaleString()}</td>
-                      <td className="p-3 text-right font-medium text-slate-900">{Math.round(p.scenario_units).toLocaleString()}</td>
-                      <td className="p-3 text-right font-medium text-slate-800">{money(p.baseline_gross_profit)}</td>
-                      <td className={`p-3 text-right font-bold ${p.scenario_gross_profit >= p.baseline_gross_profit ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {money(p.scenario_gross_profit)}
-                      </td>
-                      <td className="p-3 text-right font-medium text-indigo-700">{beTxt}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            A blank value means no number of extra sales can match your current profit at the new settings.
-          </p>
+      {/* Comparison Chart */}
+      <div className="exec-card p-5 space-y-4">
+        <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">
+          Baseline vs Simulated Financials
+        </h3>
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={comparisonChartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" className="dark:stroke-slate-800" vertical={false} />
+              <XAxis dataKey="Measure" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+              <YAxis tickFormatter={val => `$${Math.round(val / 1000)}k`} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+              <Tooltip
+                formatter={(val: any) => [`${money(Number(val))}`, '']}
+                contentStyle={{
+                  backgroundColor: 'var(--card-surface)',
+                  borderColor: 'var(--card-border)',
+                  borderRadius: '0.75rem',
+                  fontSize: '12px'
+                }}
+              />
+              <Legend />
+              <Bar dataKey="Current Baseline" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Simulated Scenario" fill="#6366f1" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       </div>
     </div>

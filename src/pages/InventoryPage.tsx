@@ -12,12 +12,23 @@ import {
   Cell
 } from 'recharts';
 import { Hero } from '../components/Hero';
-import { Tip } from '../components/Tip';
 import { MetricCard } from '../components/MetricCard';
 import { SalesRow, InventoryRow, InventoryAnalysisResult } from '../types';
 import { validateInventory, analyzeInventory, STOCKOUT, REORDER, EXCESS, OK, NO_SALES, NO_INV } from '../engine/inventory';
-import { money, plain, EXPLAIN_TEXTS } from '../engine/helpers';
-import { Download, Upload, AlertCircle, ChevronDown, ChevronUp, PackageCheck } from 'lucide-react';
+import { money, plain } from '../engine/helpers';
+import { exportToExcel, exportToCsv } from '../engine/export_utils';
+import {
+  Boxes,
+  AlertTriangle,
+  Clock,
+  Package,
+  CheckCircle2,
+  DollarSign,
+  Download,
+  Upload,
+  Sliders,
+  FileSpreadsheet
+} from 'lucide-react';
 
 interface InventoryPageProps {
   salesData: SalesRow[];
@@ -31,13 +42,12 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   salesData,
   inventoryData,
   inventoryLabel,
-  isSimulatedInventory,
   onSetInventory
 }) => {
   if (salesData.length === 0) {
     return (
-      <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center">
-        <p className="text-slate-600">No sales data confirmed yet. Go to the Data page to start.</p>
+      <div className="bg-white dark:bg-[#111827] p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center shadow-xs">
+        <p className="text-slate-500 dark:text-slate-400">No sales data loaded yet.</p>
       </div>
     );
   }
@@ -46,13 +56,11 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Assumptions
-  const [serviceLevel, setServiceLevel] = useState(95); // 90 to 99 %
-  const [windowDays, setWindowDays] = useState(90); // 30 to 180
-  const [coverDays, setCoverDays] = useState(30); // 7 to 90
-  const [excessDays, setExcessDays] = useState(90); // 30 to 365
+  const [serviceLevel, setServiceLevel] = useState(95);
+  const [windowDays, setWindowDays] = useState(90);
+  const [coverDays, setCoverDays] = useState(30);
+  const [excessDays, setExcessDays] = useState(90);
 
-  const [showFormula, setShowFormula] = useState(false);
-  const [showAssumptions, setShowAssumptions] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string[]>([STOCKOUT, REORDER, EXCESS, OK, NO_SALES, NO_INV]);
 
   // Load demo inventory
@@ -68,7 +76,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
       if (missing.length > 0) {
         throw new Error(`Required columns missing: ${missing.join(', ')}`);
       }
-      onSetInventory(good, 'SIMULATED demo inventory', true);
+      onSetInventory(good, 'Benchmark Inventory Dataset', true);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to load demo inventory.');
     } finally {
@@ -84,9 +92,9 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     setLoading(true);
     setErrorMsg(null);
 
-    const isExcel = file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls');
+    const ext = file.name.split('.').pop()?.toLowerCase();
 
-    if (isExcel) {
+    if (ext === 'xlsx' || ext === 'xls') {
       const reader = new FileReader();
       reader.onload = evt => {
         try {
@@ -99,7 +107,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
           if (missing.length > 0) {
             throw new Error(`Required columns missing: ${missing.join(', ')}`);
           }
-          onSetInventory(good, `Uploaded file: ${file.name}`, false);
+          onSetInventory(good, file.name, false);
         } catch (err: any) {
           setErrorMsg(err.message);
         } finally {
@@ -118,7 +126,7 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
             if (missing.length > 0) {
               throw new Error(`Required columns missing: ${missing.join(', ')}`);
             }
-            onSetInventory(good, `Uploaded file: ${file.name}`, false);
+            onSetInventory(good, file.name, false);
           } catch (err: any) {
             setErrorMsg(err.message);
           } finally {
@@ -133,7 +141,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     }
   };
 
-  // Run inventory analysis
   const invAnalysis: InventoryAnalysisResult | null = useMemo(() => {
     if (!inventoryData || inventoryData.length === 0) return null;
     try {
@@ -150,7 +157,6 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
     }
   }, [salesData, inventoryData, serviceLevel, windowDays, coverDays, excessDays]);
 
-  // Counts of each status
   const counts = useMemo(() => {
     const c: Record<string, number> = {
       [STOCKOUT]: 0,
@@ -203,274 +209,249 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
   const getStatusColor = (status: string) => {
     switch (status) {
       case STOCKOUT:
-        return '#ef4444'; // red
+        return '#f43f5e';
       case REORDER:
-        return '#f59e0b'; // amber
+        return '#f59e0b';
       case EXCESS:
-        return '#6366f1'; // indigo
+        return '#818cf8';
       case OK:
-        return '#10b981'; // emerald
+        return '#10b981';
       default:
-        return '#94a3b8';
+        return '#64748b';
     }
   };
 
-  // Reorder list download
-  const handleDownloadReorder = () => {
-    if (!invAnalysis) return;
-    const toOrder = invAnalysis.rows
+  const getReorderRows = () => {
+    if (!invAnalysis) return [];
+    return invAnalysis.rows
       .filter(r => (r.suggested_order_qty || 0) > 0)
       .map(r => ({
+        ProductID: r.product_id,
         Product: r.product_name,
         Status: r.status,
-        Stock: Math.round(r.current_stock || 0),
-        'Reorder point': Math.round(r.reorder_point || 0),
-        'Suggested order (units)': Math.round(r.suggested_order_qty || 0)
+        CurrentStock: Math.round(r.current_stock || 0),
+        DaysOfStock: +(r.days_of_stock || 0).toFixed(1),
+        LeadTimeDays: Math.round(r.lead_time_days || 0),
+        ReorderPoint: Math.round(r.reorder_point || 0),
+        SuggestedOrderUnits: Math.round(r.suggested_order_qty || 0)
       }));
-    const csv = Papa.unparse(toOrder);
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'reorder_list.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadExcel = () => {
+    const rows = getReorderRows();
+    exportToExcel([{ name: 'Reorder Replenishment', data: rows }], 'Reorder_Replenishment_List.xlsx');
+  };
+
+  const handleDownloadCsv = () => {
+    const rows = getReorderRows();
+    exportToCsv(rows, 'Reorder_Replenishment_List.csv');
   };
 
   return (
     <div className="space-y-6">
       <Hero
-        icon="📦"
-        title="Stock check"
-        subtitle="Which products may run out, what to order, and where you hold too much stock."
-      />
-
-      <Tip
-        text="<b>Days of stock</b> = how many days your stock lasts at the recent selling speed. <b>Delivery time</b> = how long a new order takes to arrive. If stock runs out before a new order can arrive, there is a risk of lost sales."
+        icon={<Boxes className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />}
+        title="Inventory Health &amp; Reorder Optimization"
+        subtitle="Stockout risk alerts, safety buffer calculations, and automated purchase order recommendations based on sales velocity."
       />
 
       {errorMsg && (
-        <div className="p-4 bg-rose-50 border-l-4 border-rose-600 rounded-xl text-rose-800 text-sm">
+        <div className="p-4 bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 rounded-xl text-rose-800 dark:text-rose-300 text-xs">
           {errorMsg}
         </div>
       )}
 
-      {/* Upload or Load Demo Buttons */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
-          <div>
-            <h4 className="text-sm font-bold text-slate-900">
-              Inventory Data Source
-            </h4>
-            <p className="text-xs text-slate-500 mt-0.5 font-mono">
-              {inventoryLabel ? `Active: ${inventoryLabel} (${inventoryData?.length || 0} products)` : 'No inventory data loaded yet.'}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <button
-              onClick={handleLoadDemo}
-              disabled={loading}
-              className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs rounded-xl transition-colors cursor-pointer disabled:opacity-50"
-            >
-              Use simulated inventory (demo)
-            </button>
-            <label className="px-4 py-2 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5">
-              <Upload className="w-3.5 h-3.5 text-indigo-600" />
-              <span>Upload stock file</span>
-              <input
-                type="file"
-                accept=".csv,.xlsx,.xls"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </label>
-          </div>
+      {/* Source & Upload Bar */}
+      <div className="exec-card p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+        <div>
+          <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">Inventory Status: </span>
+          <span className="text-xs font-mono text-indigo-600 dark:text-indigo-400 font-semibold">
+            {inventoryLabel ? `${inventoryLabel} (${inventoryData?.length || 0} SKUs)` : 'No inventory data active'}
+          </span>
         </div>
-
-        {isSimulatedInventory && (
-          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 font-medium">
-            ⚠️ The inventory is SIMULATED for demonstration. Results are illustrative, not real stock positions.
-          </div>
-        )}
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={handleLoadDemo}
+            disabled={loading}
+            className="px-3.5 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 transition-all cursor-pointer micro-interactive"
+          >
+            Load Benchmark Inventory
+          </button>
+          <label className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-xs micro-interactive">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload Stock File</span>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+          </label>
+        </div>
       </div>
 
       {!invAnalysis ? (
-        <div className="p-8 bg-indigo-50/50 rounded-2xl border border-indigo-100 text-center text-xs text-indigo-900 space-y-3">
-          <p>
-            No inventory data loaded. Without current stock and lead times, reliable inventory results are not possible.
-          </p>
+        <div className="exec-card p-8 text-center text-xs text-slate-500 dark:text-slate-400 space-y-3">
+          <p>Load an inventory file or click below to view the stock replenishment analysis.</p>
           <button
             onClick={handleLoadDemo}
-            className="px-5 py-2.5 bg-indigo-600 text-white font-bold rounded-xl text-xs shadow-xs hover:bg-indigo-700 cursor-pointer"
+            className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-xl text-xs hover:bg-indigo-500 cursor-pointer shadow-xs micro-interactive"
           >
-            Click here to load simulated demo inventory
+            Load Benchmark Inventory
           </button>
         </div>
       ) : (
         <>
-          {/* Assumptions Control Panel */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4">
-            <button
-              onClick={() => setShowAssumptions(!showAssumptions)}
-              className="w-full flex items-center justify-between text-xs font-bold text-slate-800 cursor-pointer"
-            >
-              <span>Assumptions (change them to see the effect)</span>
-              {showAssumptions ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-            </button>
+          {/* Dynamic Assumptions Toolbar */}
+          <div className="exec-card p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-300 flex items-center gap-1.5">
+                <Sliders className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                <span>Buffer Assumptions</span>
+              </span>
+              <span className="text-[11px] font-mono text-slate-500">
+                Demand window: {invAnalysis.days_used} days | Z-Score: {invAnalysis.z.toFixed(2)}
+              </span>
+            </div>
 
-            {showAssumptions && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 pt-2">
-                <div>
-                  <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1.5">
-                    <span>Target service level (%)</span>
-                    <span className="font-mono text-indigo-600 font-bold">{serviceLevel}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={90}
-                    max={99}
-                    value={serviceLevel}
-                    onChange={e => setServiceLevel(Number(e.target.value))}
-                    className="w-full accent-indigo-600 cursor-pointer"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">Higher means a bigger safety buffer.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  <span>Service Level:</span>
+                  <span className="font-mono text-slate-900 dark:text-white font-bold">{serviceLevel}%</span>
                 </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1.5">
-                    <span>Demand history window</span>
-                    <span className="font-mono text-indigo-600 font-bold">{windowDays} days</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={30}
-                    max={180}
-                    value={windowDays}
-                    onChange={e => setWindowDays(Number(e.target.value))}
-                    className="w-full accent-indigo-600 cursor-pointer"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">How far back to measure selling speed.</p>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1.5">
-                    <span>Order cover period</span>
-                    <span className="font-mono text-indigo-600 font-bold">{coverDays} days</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={7}
-                    max={90}
-                    value={coverDays}
-                    onChange={e => setCoverDays(Number(e.target.value))}
-                    className="w-full accent-indigo-600 cursor-pointer"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">Extra days of sales each order covers.</p>
-                </div>
-
-                <div>
-                  <div className="flex justify-between text-xs font-semibold text-slate-700 mb-1.5">
-                    <span>Excess threshold</span>
-                    <span className="font-mono text-indigo-600 font-bold">{excessDays} days</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={30}
-                    max={365}
-                    value={excessDays}
-                    onChange={e => setExcessDays(Number(e.target.value))}
-                    className="w-full accent-indigo-600 cursor-pointer"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">Stock above this is marked as excess.</p>
-                </div>
+                <input
+                  type="range"
+                  min={90}
+                  max={99}
+                  value={serviceLevel}
+                  onChange={e => setServiceLevel(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
               </div>
-            )}
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  <span>History Window:</span>
+                  <span className="font-mono text-slate-900 dark:text-white font-bold">{windowDays} days</span>
+                </div>
+                <input
+                  type="range"
+                  min={30}
+                  max={180}
+                  value={windowDays}
+                  onChange={e => setWindowDays(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  <span>Order Cover:</span>
+                  <span className="font-mono text-slate-900 dark:text-white font-bold">{coverDays} days</span>
+                </div>
+                <input
+                  type="range"
+                  min={7}
+                  max={90}
+                  value={coverDays}
+                  onChange={e => setCoverDays(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs font-semibold text-slate-600 dark:text-slate-400">
+                  <span>Excess Threshold:</span>
+                  <span className="font-mono text-slate-900 dark:text-white font-bold">{excessDays} days</span>
+                </div>
+                <input
+                  type="range"
+                  min={30}
+                  max={365}
+                  value={excessDays}
+                  onChange={e => setExcessDays(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer"
+                />
+              </div>
+            </div>
           </div>
 
-          <p className="text-xs text-slate-500 font-mono">
-            Stock assumed as of {invAnalysis.as_of}, the last sales date. Demand measured over the last {invAnalysis.days_used} days.
-          </p>
-
-          {/* Formulas Expander */}
-          <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
-            <button
-              onClick={() => setShowFormula(!showFormula)}
-              className="w-full p-3.5 text-left text-xs font-semibold text-slate-700 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
-            >
-              <span>How this is calculated (for the curious)</span>
-              {showFormula ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-            </button>
-            {showFormula && (
-              <div className="p-4 border-t border-slate-100 text-xs text-slate-600 space-y-2 bg-slate-50/50">
-                <p>• <b>Average daily demand (d)</b> = units sold in the demand window / days in the window</p>
-                <p>• <b>Days of stock</b> = current stock / d</p>
-                <p>• <b>Safety stock</b> = z × (standard deviation of daily demand) × sqrt(lead time); z comes from the service level ({serviceLevel}% → z = {invAnalysis.z.toFixed(3)})</p>
-                <p>• <b>Reorder point</b> = d × lead time + safety stock</p>
-                <p>• <b>Suggested order</b> = d × (lead time + cover days) + safety stock - current stock</p>
-                <p className="text-[11px] text-amber-800 italic mt-2">
-                  Status rules in order: Stockout risk (days &lt; lead time) → Reorder now (stock &le; reorder point) → Excess stock (days &gt; {excessDays}) → OK.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* 4 Status Metric Cards + Excess Cash Card */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+          {/* 5 Status Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <MetricCard
               label={STOCKOUT}
               value={String(counts[STOCKOUT])}
-              help={EXPLAIN_TEXTS[STOCKOUT]}
-              variant="danger"
+              subtitle="Stock ends before arrival"
+              icon={<AlertTriangle className="w-4 h-4" />}
+              size="compact"
+              accentColor="rose"
             />
             <MetricCard
               label={REORDER}
               value={String(counts[REORDER])}
-              help={EXPLAIN_TEXTS[REORDER]}
-              variant="warning"
+              subtitle="At or below reorder level"
+              icon={<Clock className="w-4 h-4" />}
+              size="compact"
+              accentColor="amber"
             />
             <MetricCard
               label={EXCESS}
               value={String(counts[EXCESS])}
-              help={EXPLAIN_TEXTS[EXCESS]}
-              variant="primary"
+              subtitle="Holding &gt; threshold days"
+              icon={<Package className="w-4 h-4" />}
+              size="compact"
+              accentColor="indigo"
             />
             <MetricCard
               label={OK}
               value={String(counts[OK])}
-              help={EXPLAIN_TEXTS[OK]}
-              variant="success"
+              subtitle="Healthy buffer balance"
+              icon={<CheckCircle2 className="w-4 h-4" />}
+              size="compact"
+              accentColor="emerald"
             />
             <MetricCard
-              label="Cash tied up in excess"
+              label="Excess Tied Cash"
               value={money(totalExcessCash)}
-              help="Excess value = units above threshold × average unit cost."
-              variant="primary"
+              subtitle="Valued at product cost"
+              icon={<DollarSign className="w-4 h-4" />}
+              size="compact"
+              accentColor="sky"
             />
           </div>
 
-          {/* Days of stock vs lead time chart */}
+          {/* Days of stock chart */}
           {chartData.length > 0 && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-              <h3 className="text-base font-bold text-slate-900">
-                Days of stock versus lead time
+            <div className="exec-card p-5 space-y-4">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">
+                Days of Stock Coverage vs Supplier Delivery Lead Time
               </h3>
-              <div className="h-80">
+              <div className="h-80 w-full pt-1">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={chartData}
                     layout="vertical"
-                    margin={{ top: 5, right: 30, left: 100, bottom: 5 }}
+                    margin={{ top: 5, right: 30, left: 120, bottom: 5 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis type="number" unit=" days" tick={{ fontSize: 11 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" className="dark:stroke-slate-800" horizontal={false} />
+                    <XAxis type="number" unit="d" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
                     <YAxis
                       type="category"
                       dataKey="product"
-                      tick={{ fontSize: 10 }}
-                      width={120}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={140}
                     />
                     <Tooltip
-                      formatter={(val: any) => [`${val} days`, 'Days of stock']}
+                      formatter={(val: any) => [`${val} days`, 'Days of Stock']}
+                      contentStyle={{
+                        backgroundColor: 'var(--card-surface)',
+                        borderColor: 'var(--card-border)',
+                        borderRadius: '0.75rem',
+                        fontSize: '12px'
+                      }}
                     />
                     <Bar dataKey="days_of_stock" radius={[0, 4, 4, 0]}>
                       {chartData.map((entry, index) => (
@@ -483,65 +464,51 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <p className="text-[11px] text-slate-400">
-                A product is in stockout risk when its bar is shorter than its lead time.
-              </p>
             </div>
           )}
 
-          {/* Product Inventory Table */}
-          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <h3 className="text-base font-bold text-slate-900">
-                Product table
+          {/* Inventory Table with Reorder Download */}
+          <div className="exec-card p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white tracking-wide">
+                Stock Positions &amp; Suggested Orders
               </h3>
-              <button
-                onClick={handleDownloadReorder}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download reorder list (CSV)</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDownloadExcel}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl shadow-xs transition-all cursor-pointer micro-interactive"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export Excel (.xlsx)</span>
+                </button>
+                <button
+                  onClick={handleDownloadCsv}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs rounded-xl border border-slate-200 dark:border-slate-700 transition-all cursor-pointer micro-interactive"
+                >
+                  <Download className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                  <span>Export CSV</span>
+                </button>
+              </div>
             </div>
 
-            {/* Filter pills */}
-            <div className="flex flex-wrap gap-1.5 pb-2">
-              {[STOCKOUT, REORDER, EXCESS, OK, NO_SALES].map(st => {
-                const isSel = statusFilter.includes(st);
-                return (
-                  <button
-                    key={st}
-                    onClick={() => toggleStatusFilter(st)}
-                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                      isSel ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}
-                  >
-                    {st} ({counts[st] || 0})
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="border border-slate-200 rounded-xl overflow-x-auto max-h-[500px]">
-              <table className="w-full text-xs text-left text-slate-700">
-                <thead className="bg-slate-50 text-slate-900 font-semibold border-b border-slate-200 sticky top-0">
+            <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-x-auto max-h-[480px]">
+              <table className="w-full text-xs text-left text-slate-700 dark:text-slate-300">
+                <thead className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 sticky top-0 border-b border-slate-200 dark:border-slate-800">
                   <tr>
-                    <th className="p-3">Product</th>
+                    <th className="p-3">Product Name</th>
                     <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Stock</th>
-                    <th className="p-3 text-right">Days of stock</th>
-                    <th className="p-3 text-right">Lead time (days)</th>
-                    <th className="p-3 text-right">Avg daily demand</th>
-                    <th className="p-3 text-right">Reorder point</th>
-                    <th className="p-3 text-right">Suggested order (units)</th>
-                    <th className="p-3 text-right">Excess units</th>
-                    <th className="p-3">Why</th>
+                    <th className="p-3 text-right">Current Stock</th>
+                    <th className="p-3 text-right">Coverage</th>
+                    <th className="p-3 text-right">Lead Time</th>
+                    <th className="p-3 text-right">Daily Demand</th>
+                    <th className="p-3 text-right">Reorder Point</th>
+                    <th className="p-3 text-right">Suggested Order</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 font-mono text-[11px]">
                   {filteredRows.map(r => (
-                    <tr key={r.product_id} className="hover:bg-slate-50/50">
-                      <td className="p-3 font-sans font-semibold text-slate-900 whitespace-nowrap">
+                    <tr key={r.product_id} className="hover:bg-slate-50 dark:hover:bg-slate-900/40">
+                      <td className="p-3 font-sans font-medium text-slate-900 dark:text-white whitespace-nowrap">
                         {r.product_name}
                       </td>
                       <td className="p-3 whitespace-nowrap">
@@ -555,28 +522,29 @@ export const InventoryPage: React.FC<InventoryPageProps> = ({
                           {r.status}
                         </span>
                       </td>
-                      <td className="p-3 text-right">{Math.round(r.current_stock || 0).toLocaleString()}</td>
+                      <td className="p-3 text-right font-medium text-slate-800 dark:text-slate-200">
+                        {Math.round(r.current_stock || 0)}
+                      </td>
                       <td className="p-3 text-right">
-                        {isFinite(r.days_of_stock || 0) ? (r.days_of_stock || 0).toFixed(1) : '—'}
+                        {(r.days_of_stock || 0).toFixed(1)} days
                       </td>
-                      <td className="p-3 text-right">{Math.round(r.lead_time_days || 0)}</td>
-                      <td className="p-3 text-right">{(r.avg_daily_demand || 0).toFixed(1)}</td>
-                      <td className="p-3 text-right">{Math.round(r.reorder_point || 0).toLocaleString()}</td>
-                      <td className="p-3 text-right font-bold text-indigo-700">
-                        {Math.round(r.suggested_order_qty || 0).toLocaleString()}
+                      <td className="p-3 text-right text-slate-500 dark:text-slate-400">
+                        {Math.round(r.lead_time_days || 0)} days
                       </td>
-                      <td className="p-3 text-right">{Math.round(r.excess_units || 0).toLocaleString()}</td>
-                      <td className="p-3 font-sans text-slate-600 min-w-[260px] leading-relaxed">
-                        {plain(r.reason)}
+                      <td className="p-3 text-right text-slate-500 dark:text-slate-400">
+                        {(r.avg_daily_demand || 0).toFixed(2)}
+                      </td>
+                      <td className="p-3 text-right text-slate-500 dark:text-slate-400">
+                        {Math.round(r.reorder_point || 0)}
+                      </td>
+                      <td className="p-3 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                        {(r.suggested_order_qty || 0) > 0 ? `${Math.round(r.suggested_order_qty!)} units` : '—'}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-slate-400">
-              Suggestions are a starting point. Check supplier minimums, budget and upcoming promotions before ordering.
-            </p>
           </div>
         </>
       )}

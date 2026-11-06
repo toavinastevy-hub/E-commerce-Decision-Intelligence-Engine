@@ -1,22 +1,41 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Papa from 'papaparse';
 import { Sidebar, PageId } from './components/Sidebar';
-import { DataPage } from './pages/DataPage';
-import { ExecutivePage } from './pages/ExecutivePage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ExecutivePage } from './pages/ExecutivePage';
 import { ProductsPage } from './pages/ProductsPage';
 import { DiscountsPage } from './pages/DiscountsPage';
 import { SimulatorPage } from './pages/SimulatorPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { RecommendationsPage } from './pages/RecommendationsPage';
+import { DataPage } from './pages/DataPage';
 import { SalesRow, InventoryRow, InventoryAnalysisResult } from './types';
 import { checkDataQuality, splitValidRows } from './engine/data_quality';
 import { validateInventory, analyzeInventory } from './engine/inventory';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, Sparkles, Sun, Moon } from 'lucide-react';
 
 export function App() {
-  const [currentPage, setCurrentPage] = useState<PageId>('Data');
+  const [currentPage, setCurrentPage] = useState<PageId>('Dashboard');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Theme Management (Light by default, Dark mode ready)
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('edie_theme');
+    return (saved === 'dark' || saved === 'light') ? saved : 'light';
+  });
+
+  useEffect(() => {
+    localStorage.setItem('edie_theme', theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
+  };
 
   // Core Data State
   const [salesData, setSalesData] = useState<SalesRow[]>([]);
@@ -29,7 +48,46 @@ export function App() {
   const [inventoryLabel, setInventoryLabel] = useState<string | null>(null);
   const [isSimulatedInventory, setIsSimulatedInventory] = useState<boolean>(false);
 
-  // Compute inventory analysis result if both sales and inventory exist
+  // Auto-load benchmark demo on mount so the user immediately sees the gorgeous executive dashboard
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadInitialData() {
+      try {
+        const sRes = await fetch('/data/sales.csv');
+        const sText = await sRes.text();
+        const sParsed = Papa.parse(sText, { header: true, skipEmptyLines: true });
+        const sReport = checkDataQuality(sParsed.data, sParsed.meta.fields || []);
+        const { valid, excluded } = splitValidRows(sParsed.data, sReport);
+
+        const iRes = await fetch('/data/inventory.csv');
+        const iText = await iRes.text();
+        const iParsed = Papa.parse(iText, { header: true, skipEmptyLines: true });
+        const salesPids = Array.from(new Set(valid.map(r => r.product_id)));
+        const { good } = validateInventory(iParsed.data, salesPids);
+
+        if (isMounted) {
+          setSalesData(valid);
+          setExcludedData(excluded);
+          setSourceLabel('Global Retail Enterprise Benchmark');
+          setIsSimulated(true);
+
+          setInventoryData(good);
+          setInventoryLabel('Active Replenishment Inventory');
+          setIsSimulatedInventory(true);
+        }
+      } catch (err) {
+        console.error('Initial data load error:', err);
+      }
+    }
+
+    loadInitialData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const inventoryResult: InventoryAnalysisResult | null = useMemo(() => {
     if (salesData.length === 0 || !inventoryData || inventoryData.length === 0) {
       return null;
@@ -41,67 +99,29 @@ export function App() {
     }
   }, [salesData, inventoryData]);
 
-  // One-click quick start
-  const handleQuickStart = async () => {
-    // 1. Fetch clean sales demo
-    const sRes = await fetch('/data/sales.csv');
-    const sText = await sRes.text();
-    const sParsed = Papa.parse(sText, { header: true, skipEmptyLines: true });
-    const sReport = checkDataQuality(sParsed.data, sParsed.meta.fields || []);
-    const { valid, excluded } = splitValidRows(sParsed.data, sReport);
-
-    // 2. Fetch inventory demo
-    const iRes = await fetch('/data/inventory.csv');
-    const iText = await iRes.text();
-    const iParsed = Papa.parse(iText, { header: true, skipEmptyLines: true });
-    const salesPids = Array.from(new Set(valid.map(r => r.product_id)));
-    const { good } = validateInventory(iParsed.data, salesPids);
-
-    // 3. Store in state
-    setSalesData(valid);
-    setExcludedData(excluded);
-    setSourceLabel('SIMULATED demo data (clean)');
-    setIsSimulated(true);
-
-    setInventoryData(good);
-    setInventoryLabel('SIMULATED demo inventory');
-    setIsSimulatedInventory(true);
-
-    // Navigate to executive summary
-    setCurrentPage('Executive summary');
-  };
-
+  // Handlers for Data Page confirmations
   const handleConfirmData = (
-    valid: SalesRow[],
+    data: SalesRow[],
     excluded: any[],
     label: string,
-    simulated: boolean,
-    embeddedInventory?: InventoryRow[]
+    simulated: boolean
   ) => {
-    setSalesData(valid);
+    setSalesData(data);
     setExcludedData(excluded);
     setSourceLabel(label);
     setIsSimulated(simulated);
-
-    if (embeddedInventory && embeddedInventory.length > 0) {
-      setInventoryData(embeddedInventory);
-      setInventoryLabel(`${label} (Inventory sheet)`);
-      setIsSimulatedInventory(simulated);
-    } else if (isSimulatedInventory && !simulated) {
-      // Clear demo inventory if real sales uploaded without inventory
-      setInventoryData(null);
-      setInventoryLabel(null);
-      setIsSimulatedInventory(false);
-    }
   };
 
-  const handleSetInventory = (data: InventoryRow[], label: string, simulated: boolean) => {
+  const handleSetInventory = (
+    data: InventoryRow[] | null,
+    label: string | null,
+    simulated: boolean
+  ) => {
     setInventoryData(data);
     setInventoryLabel(label);
     setIsSimulatedInventory(simulated);
   };
 
-  // Close mobile drawer on page change
   const navigateTo = (page: PageId) => {
     setCurrentPage(page);
     setMobileMenuOpen(false);
@@ -109,58 +129,61 @@ export function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row bg-[#F8FAFC]">
-      {/* Mobile top bar */}
-      <div className="md:hidden flex items-center justify-between p-4 bg-[#F1F2FB] border-b border-indigo-100">
-        <div className="flex items-center gap-2">
-          <span className="text-xl">📊</span>
-          <span className="font-bold text-slate-900">EDIE</span>
+    <div className="min-h-screen flex flex-col md:flex-row bg-slate-50 dark:bg-[#0B0F19] text-slate-800 dark:text-slate-100 antialiased transition-colors duration-200">
+      {/* Mobile Top Header */}
+      <div className="md:hidden flex items-center justify-between p-4 bg-white dark:bg-[#0d121f] border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+            <Sparkles className="w-4 h-4 text-indigo-100" />
+          </div>
+          <div>
+            <span className="font-bold text-sm text-slate-900 dark:text-white block leading-none">EDIE Analytics</span>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400">Decision Intelligence</span>
+          </div>
         </div>
-        <button
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-white"
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleTheme}
+            className="p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            title="Toggle Theme"
+          >
+            {theme === 'light' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+          </button>
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="p-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Sidebar Navigation - Fixed & Sticky on desktop */}
+      <div className={`${mobileMenuOpen ? 'fixed inset-0 z-50 bg-black/50 md:relative md:bg-transparent' : 'hidden md:block'} md:sticky md:top-0 md:h-screen shrink-0`}>
+        <div
+          className={`${mobileMenuOpen ? 'w-72 h-full' : 'w-full h-full'}`}
+          onClick={e => e.stopPropagation()}
         >
-          {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
-
-      {/* Sidebar for Desktop & Mobile drawer */}
-      <div className={`${mobileMenuOpen ? 'block' : 'hidden'} md:block shrink-0`}>
-        <Sidebar
-          currentPage={currentPage}
-          onSelectPage={navigateTo}
-          sourceLabel={sourceLabel}
-          isSimulated={isSimulated}
-          validRowCount={salesData.length}
-          inventoryRowCount={inventoryData?.length || 0}
-        />
-      </div>
-
-      {/* Main Content Area */}
-      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
-        {currentPage === 'Data' && (
-          <DataPage
-            onQuickStart={handleQuickStart}
-            onLoadCleanDemo={async () => {
-              const res = await fetch('/data/sales.csv');
-              const text = await res.text();
-              const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-              const report = checkDataQuality(parsed.data, parsed.meta.fields || []);
-              const { valid, excluded } = splitValidRows(parsed.data, report);
-              handleConfirmData(valid, excluded, 'SIMULATED demo data (clean)', true);
-            }}
-            onLoadDirtyDemo={async () => {
-              const res = await fetch('/data/sales_dirty.csv');
-              const text = await res.text();
-              const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-              const report = checkDataQuality(parsed.data, parsed.meta.fields || []);
-              const { valid, excluded } = splitValidRows(parsed.data, report);
-              handleConfirmData(valid, excluded, 'SIMULATED demo data with planted errors', true);
-            }}
-            onConfirmData={handleConfirmData}
-            currentValidCount={salesData.length}
-            currentExcludedCount={excludedData.length}
+          <Sidebar
+            currentPage={currentPage}
+            onSelectPage={navigateTo}
             sourceLabel={sourceLabel}
+            isSimulated={isSimulated}
+            validRowCount={salesData.length}
+            inventoryRowCount={inventoryData?.length || 0}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        </div>
+      </div>
+
+      {/* Main Analytical Canvas */}
+      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full overflow-x-hidden">
+        {currentPage === 'Dashboard' && (
+          <DashboardPage
+            salesData={salesData}
+            sourceLabel={sourceLabel}
+            onNavigateToData={() => navigateTo('Data')}
             onNavigateToExecutive={() => navigateTo('Executive summary')}
           />
         )}
@@ -174,15 +197,6 @@ export function App() {
             simulatedInventory={isSimulatedInventory}
             onNavigateToRecommendations={() => navigateTo('Recommendations')}
             onNavigateToDashboard={() => navigateTo('Dashboard')}
-          />
-        )}
-
-        {currentPage === 'Dashboard' && (
-          <DashboardPage
-            salesData={salesData}
-            sourceLabel={sourceLabel}
-            isSimulated={isSimulated}
-            excludedCount={excludedData.length}
           />
         )}
 
@@ -215,6 +229,13 @@ export function App() {
             isSimulated={isSimulated}
             simulatedInventory={isSimulatedInventory}
             excludedCount={excludedData.length}
+          />
+        )}
+
+        {currentPage === 'Data' && (
+          <DataPage
+            onConfirmData={handleConfirmData}
+            onNavigateToDashboard={() => navigateTo('Dashboard')}
           />
         )}
       </main>
