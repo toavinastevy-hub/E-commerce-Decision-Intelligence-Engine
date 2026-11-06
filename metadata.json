@@ -1,0 +1,8 @@
+{
+  "name": "E-commerce Decision Intelligence Engine (EDIE)",
+  "description": "Interactive analytics application that turns e-commerce sales and inventory data into ranked business recommendations and decision intelligence.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
