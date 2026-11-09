@@ -99,17 +99,31 @@ export function App() {
     }
   }, [salesData, inventoryData]);
 
-  // Handlers for Data Page confirmations
+  // Handlers for Data Page confirmations (Wipes previous data completely)
   const handleConfirmData = (
     data: SalesRow[],
     excluded: any[],
     label: string,
-    simulated: boolean
+    simulated: boolean,
+    inventory?: InventoryRow[] | null
   ) => {
     setSalesData(data);
     setExcludedData(excluded);
     setSourceLabel(label);
     setIsSimulated(simulated);
+    setInventoryData(inventory || null);
+    setInventoryLabel(inventory && inventory.length > 0 ? `${label} (Stock)` : null);
+    setIsSimulatedInventory(simulated);
+  };
+
+  const handleClearAllData = () => {
+    setSalesData([]);
+    setExcludedData([]);
+    setSourceLabel(null);
+    setIsSimulated(false);
+    setInventoryData(null);
+    setInventoryLabel(null);
+    setIsSimulatedInventory(false);
   };
 
   const handleSetInventory = (
@@ -173,6 +187,7 @@ export function App() {
             inventoryRowCount={inventoryData?.length || 0}
             theme={theme}
             onToggleTheme={toggleTheme}
+            onClearData={handleClearAllData}
           />
         </div>
       </div>
@@ -235,6 +250,10 @@ export function App() {
         {currentPage === 'Data' && (
           <DataPage
             onConfirmData={handleConfirmData}
+            onClearData={handleClearAllData}
+            hasActiveData={salesData.length > 0}
+            activeDataLabel={sourceLabel}
+            activeRowCount={salesData.length}
             onNavigateToDashboard={() => navigateTo('Dashboard')}
           />
         )}

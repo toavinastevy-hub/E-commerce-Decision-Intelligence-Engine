@@ -15,7 +15,8 @@ import {
   ShieldCheck,
   Sparkles,
   Sun,
-  Moon
+  Moon,
+  Trash2
 } from 'lucide-react';
 import { GLOSSARY_ITEMS } from '../engine/helpers';
 
@@ -38,6 +39,7 @@ interface SidebarProps {
   inventoryRowCount: number;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
+  onClearData?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -47,7 +49,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   validRowCount,
   inventoryRowCount,
   theme = 'light',
-  onToggleTheme
+  onToggleTheme,
+  onClearData
 }) => {
   const [glossaryOpen, setGlossaryOpen] = useState(false);
 
@@ -80,10 +83,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
-        {/* Active Dataset Status Badge */}
-        {sourceLabel && (
-          <div className="mb-5 p-3 bg-slate-50 dark:bg-slate-900/90 rounded-xl border border-slate-200 dark:border-slate-800 text-xs">
-            <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+        {/* Dataset Status: Live Active Card or Clean Blank Canvas Indicator */}
+        {sourceLabel && validRowCount > 0 ? (
+          <div className="mb-5 p-3 bg-slate-50 dark:bg-slate-900/90 rounded-xl border border-slate-200 dark:border-slate-800 text-xs space-y-2">
+            <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
               <span className="flex items-center gap-1.5 text-[11px]">
                 <Database className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                 <span>Active Dataset</span>
@@ -95,7 +98,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <p className="text-slate-600 dark:text-slate-400 truncate font-mono text-[11px]" title={sourceLabel}>
               {sourceLabel}
             </p>
-            <div className="flex items-center gap-2 mt-2 text-[11px]">
+            <div className="flex items-center gap-2 text-[11px]">
               <span className="text-slate-700 dark:text-slate-300 bg-white dark:bg-slate-800/80 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 font-mono">
                 {validRowCount.toLocaleString()} records
               </span>
@@ -105,6 +108,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               )}
             </div>
+            {onClearData && (
+              <button
+                onClick={onClearData}
+                className="w-full mt-1.5 py-1.5 px-2 text-[11px] font-semibold text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-950/50 border border-rose-200 dark:border-rose-900/40 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5 micro-interactive"
+                title="Wipe current data and reset application to blank"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Clear &amp; Reset to Blank</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="mb-5 p-3 bg-slate-50 dark:bg-slate-900/90 rounded-xl border border-dashed border-slate-300 dark:border-slate-800 text-xs space-y-2">
+            <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+              <span className="flex items-center gap-1.5 text-[11px]">
+                <Database className="w-3.5 h-3.5 text-slate-400" />
+                <span>Dataset Status</span>
+              </span>
+              <span className="text-[10px] text-slate-500 dark:text-slate-400 bg-slate-200 dark:bg-slate-800 px-1.5 py-0.5 rounded font-mono">
+                BLANK
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+              No data active. Ready for new workbook upload.
+            </p>
+            <button
+              onClick={() => onSelectPage('Data')}
+              className="w-full py-1.5 px-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-semibold text-[11px] transition-colors cursor-pointer text-center block shadow-2xs micro-interactive"
+            >
+              Upload Dataset
+            </button>
           </div>
         )}
 
